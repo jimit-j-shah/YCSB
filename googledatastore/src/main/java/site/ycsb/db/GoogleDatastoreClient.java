@@ -197,7 +197,7 @@ public class GoogleDatastoreClient extends DB {
     SpanExporter gcpTraceExporter;
     try {
       gcpTraceExporter = TraceExporter.createWithConfiguration(
-          TraceConfiguration.builder().setProjectId("cindy-cloud-sdk-test").build()
+          TraceConfiguration.builder().setProjectId(projectId).build()
       );
 
     } catch (Exception exception) {
@@ -284,6 +284,7 @@ public class GoogleDatastoreClient extends DB {
       } else {
         entity = datastore.get(keyFactory.newKey(key));
       }
+      readSpan.addEvent("datastore.get returned");
     } catch (com.google.cloud.datastore.DatastoreException exception) {
       readSpan.setStatus(StatusCode.ERROR, exception.getMessage());
       logger.error(
