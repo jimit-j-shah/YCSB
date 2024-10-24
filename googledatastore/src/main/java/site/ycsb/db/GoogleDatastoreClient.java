@@ -29,17 +29,8 @@ import com.google.datastore.v1.Value;
 import com.google.datastore.v1.client.DatastoreHelper;
 import com.google.cloud.datastore.Datastore;
 import com.google.cloud.datastore.DatastoreOptions;
-//import com.google.cloud.opentelemetry.trace.TraceConfiguration;
 import com.google.cloud.opentelemetry.trace.TraceExporter;
 import com.google.cloud.opentelemetry.trace.TraceConfiguration;
-//import io.opentelemetry.api.GlobalOpenTelemetry;
-//import io.opentelemetry.api.trace.Span;
-//import io.opentelemetry.api.trace.SpanContext;
-//import io.opentelemetry.api.trace.TraceFlags;
-//import io.opentelemetry.api.trace.TraceState;
-//import io.opentelemetry.api.trace.Tracer;
-//import io.opentelemetry.context.Context;
-//import io.opentelemetry.context.Scope;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.api.trace.Span;
@@ -47,16 +38,12 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
-//import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
-import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
-import io.opentelemetry.exporters.logging.*;
-//import io.opentelemetry.exporter.logging.LoggingSpanExporter;
-import io.opentelemetry.exporters.logging.LoggingSpanExporter;
-//import io.opentelemetry.sdk.trace.samplers.Sampler;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.SpanProcessor;
 import static io.opentelemetry.semconv.resource.attributes.ResourceAttributes.SERVICE_NAME;
 
+import java.time.Duration;
 import site.ycsb.ByteIterator;
 import site.ycsb.DB;
 import site.ycsb.DBException;
@@ -208,18 +195,15 @@ public class GoogleDatastoreClient extends DB {
     // Using a batch span processor
     // You can use `.setScheduleDelay()`, `.setExporterTimeout()`,
     // `.setMaxQueueSize`(), and `.setMaxExportBatchSize()` to further customize.
-    SpanProcessor gcpSpanProcessor =
-        SimpleSpanProcessor.builder(gcpTraceExporter).build();
-  //  LoggingSpanExporter loggingSpanExporter = LoggingSpanExporter.create();
-    SpanProcessor loggingSpanProcessor = SimpleSpanProcessor.builder(new LoggingSpanExporter()).build();
+    SpanProcessor gcpSpanProcessor = BatchSpanProcessor.builder(gcpTraceExporter)
+        .setScheduleDelay(Duration.ofMillis(5000)) // milliseconds
+        .setMaxQueueSize(4096) // max queue size before dropping spans
+        .setMaxExportBatchSize(4096).build(); // max number of spans per batch
 
     // Export directly Cloud Trace with 50% trace sampling ratio
     OpenTelemetrySdk otel = OpenTelemetrySdk.builder()
         .setTracerProvider(SdkTracerProvider.builder()
-            .setResource(resource)
-            .addSpanProcessor(gcpSpanProcessor)
-            .addSpanProcessor(loggingSpanProcessor)
-            .build()).build();
+            .setResource(resource).addSpanProcessor(gcpSpanProcessor).build()).build();
 
     logger.info("otel sdk class: " + otel.toString());
     tracer = otel.getTracer("YCSB_Datastore_Test");
