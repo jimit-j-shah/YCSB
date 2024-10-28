@@ -211,7 +211,6 @@ public class GoogleDatastoreClient extends DB {
     try {
       // Setup the connection to Google Cloud Datastore with the credentials
       // obtained from the configure.
-      //DatastoreOptions.Builder options = new DatastoreOptions.Builder().projectId("cindy-cloud-sdk-test");
       Credential credential = GoogleCredential.getApplicationDefault();
 
       if (serviceAccountEmail != null && privateKeyFile != null) {
