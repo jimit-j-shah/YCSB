@@ -104,6 +104,7 @@ public class GoogleDatastoreClient extends DB {
 
   private static boolean skipIndex = true;
 
+  private OpenTelemetrySdk otel;
   private Tracer tracer;
 
   /**
@@ -178,7 +179,7 @@ public class GoogleDatastoreClient extends DB {
             "MULTI_ENTITY_PER_GROUP.");
       }
     }
-    
+
     try {
       // Setup the connection to Google Cloud Datastore with the credentials
       // obtained from the configure.
@@ -268,7 +269,7 @@ public class GoogleDatastoreClient extends DB {
 
     // Export directly Cloud Trace with 10% trace sampling ratio by default when
     // googledatastore.tracingenabled=true
-    OpenTelemetrySdk otel = OpenTelemetrySdk.builder()
+    otel = OpenTelemetrySdk.builder()
         .setTracerProvider(SdkTracerProvider.builder()
             .setResource(resource)
             .addSpanProcessor(gcpSpanProcessor)
