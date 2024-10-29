@@ -104,6 +104,7 @@ public class GoogleDatastoreClient extends DB {
 
   private static boolean skipIndex = true;
 
+  private boolean tracingEnabled = false;
   private OpenTelemetrySdk otel;
   private Tracer tracer;
 
@@ -208,23 +209,21 @@ public class GoogleDatastoreClient extends DB {
       // 1. gcloud auth application-default login must be run with the test user.
       // 2. To write traces, test user must have one of roles/cloudtrace.[admin|agent|user] roles.
       // 3. To read traces, test user must have one of roles/cloudtrace.[admin|user] roles.
-      boolean tracingEnabled =
-          Boolean.getBoolean(getProperties()
-              .getProperty("googledatastore.tracingenabled", "false"));
-
-      DatastoreOptions.Builder datastoreOptionsBuilder = DatastoreOptions
+      tracingEnabled = Boolean.parseBoolean(getProperties()
+          .getProperty("googledatastore.tracingenabled", "false"));
+      otel = getOtelSdk(projectId);
+      logger.info("otel sdk class: " + otel.toString());
+      tracer = otel.getTracer("YCSB_Datastore_Test");
+      logger.info("tracingEnabled=" + tracingEnabled);
+      DatastoreOptions datastoreOptions = DatastoreOptions
           .newBuilder()
           .setProjectId(projectId)
-          .setDatabaseId(datasetId);
-
-      if (tracingEnabled) {
-        datastoreOptionsBuilder.setOpenTelemetryOptions(
+          .setDatabaseId(datasetId)
+          .setOpenTelemetryOptions(
             DatastoreOpenTelemetryOptions.newBuilder()
                 .setTracingEnabled(tracingEnabled)
-                .setOpenTelemetry(getOtelSdk(projectId))
-                .build());
-      }
-      DatastoreOptions datastoreOptions = datastoreOptionsBuilder.build();
+                .setOpenTelemetry(otel)
+                .build()).build();
       datastore = datastoreOptions.getService();
 
     } catch (GeneralSecurityException exception) {
@@ -255,29 +254,42 @@ public class GoogleDatastoreClient extends DB {
           exception.getMessage(), exception);
     }
 
+    int traceSpanProcessorDelayMs =
+        Integer.parseInt(
+            getProperties().getProperty(
+                "googledatastore.tracespanprocessordelayms", "5000"));
+    int traceSpanQueueSize =
+        Integer.parseInt(getProperties().getProperty(
+            "googledatastore.tracespanqueuesize", "4096"));
+    int traceSpanExportBatchSize = Integer.parseInt(
+        getProperties().getProperty(
+            "googledatastore.tracespanexportbatchsize", "4096"));
     // Using a batch span processor
     // You can use `.setScheduleDelay()`, `.setExporterTimeout()`,
     // `.setMaxQueueSize`(), and `.setMaxExportBatchSize()` to further customize.
     SpanProcessor gcpSpanProcessor = BatchSpanProcessor.builder(gcpTraceExporter)
-        .setScheduleDelay(Duration.ofMillis(5000)) // milliseconds
-        .setMaxQueueSize(4096) // max queue size before dropping spans
-        .setMaxExportBatchSize(4096).build(); // max number of spans per batch
+        .setScheduleDelay(Duration.ofMillis(traceSpanProcessorDelayMs)) // milliseconds
+        .setMaxQueueSize(traceSpanQueueSize) // max queue size before dropping spans
+        .setMaxExportBatchSize(traceSpanExportBatchSize).build(); // max number of spans per batch
 
     // Default trace ID ratio of 10% when enabled
     Double traceIdRatio = Double.valueOf(
         getProperties().getProperty("googledatastore.tracesamplingratio", "0.10"));
 
+    logger.info("trace sampling ratio: " + traceIdRatio);
     // Export directly Cloud Trace with 10% trace sampling ratio by default when
     // googledatastore.tracingenabled=true
+    SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
+        .setResource(resource)
+        .addSpanProcessor(gcpSpanProcessor)
+        .setSampler(Sampler.parentBased(Sampler.traceIdRatioBased(traceIdRatio)))
+        .build();
+    if (!tracingEnabled) {
+      tracerProvider.shutdown(); // disable tracing
+      logger.info("TracerProvider shutdown");
+    }
     otel = OpenTelemetrySdk.builder()
-        .setTracerProvider(SdkTracerProvider.builder()
-            .setResource(resource)
-            .addSpanProcessor(gcpSpanProcessor)
-            .setSampler(Sampler.traceIdRatioBased(traceIdRatio))
-            .build()).build();
-
-    logger.info("otel sdk class: " + otel.toString());
-    tracer = otel.getTracer("YCSB_Datastore_Test");
+        .setTracerProvider(tracerProvider).build();
     return otel;
   }
 
@@ -288,7 +300,6 @@ public class GoogleDatastoreClient extends DB {
     KeyFactory keyFactory = datastore.newKeyFactory().setKind(table);
     Entity entity = null;
     Span readSpan = tracer.spanBuilder("ycsb-read").startSpan();
-    logger.info("readspan: " + readSpan);
     try (Scope ignore = readSpan.makeCurrent()) {
       if (isEventualConsistency) {
         entity = datastore.get(keyFactory.newKey(key), ReadOption.eventualConsistency());
@@ -309,10 +320,6 @@ public class GoogleDatastoreClient extends DB {
     } finally {
       readSpan.end();
     }
-
-    System.out.println(entity);
-
-    // logger.debug("Read entity: " + entity.toString());
 
     Map<String, com.google.cloud.datastore.Value<?>> properties = entity.getProperties();
     Set<String> propertiesToReturn =
