@@ -19,8 +19,12 @@ package site.ycsb.db;
 
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
+import com.google.api.gax.grpc.ChannelPoolSettings;
+import com.google.api.gax.grpc.InstantiatingGrpcChannelProvider;
 import com.google.cloud.datastore.*;
 import com.google.cloud.datastore.Entity;
+import com.google.cloud.datastore.v1.DatastoreSettings;
+import com.google.cloud.grpc.GrpcTransportOptions;
 import com.google.datastore.v1.*;
 import com.google.datastore.v1.CommitRequest.Mode;
 import com.google.datastore.v1.Key;
@@ -144,6 +148,13 @@ public class GoogleDatastoreClient extends DB {
           "Required property \"datasetId\" missing.");
     }
 
+    boolean usegRPC = Boolean.parseBoolean(getProperties().getProperty(
+        "googledatastore.usegRPC", "false"));
+    logger.info("usegRPC:" + usegRPC);
+    boolean useChannelProvider = Boolean.parseBoolean(getProperties().getProperty(
+        "googledatastore.useChannelProvider", "false"));
+    logger.info("useChannelProvider:" + useChannelProvider);
+
     String privateKeyFile = getProperties().getProperty(
         "googledatastore.privateKeyFile", null);
     String serviceAccountEmail = getProperties().getProperty(
@@ -215,7 +226,9 @@ public class GoogleDatastoreClient extends DB {
       logger.info("otel sdk class: " + otel.toString());
       tracer = otel.getTracer("YCSB_Datastore_Test");
       logger.info("tracingEnabled=" + tracingEnabled);
-      DatastoreOptions datastoreOptions = DatastoreOptions
+
+
+      DatastoreOptions.Builder datastoreOptionsBuilder = DatastoreOptions
           .newBuilder()
           .setProjectId(projectId)
           .setDatabaseId(datasetId)
@@ -223,7 +236,21 @@ public class GoogleDatastoreClient extends DB {
             DatastoreOpenTelemetryOptions.newBuilder()
                 .setTracingEnabled(tracingEnabled)
                 .setOpenTelemetry(otel)
-                .build()).build();
+                .build());
+
+      if (usegRPC) {
+        if (useChannelProvider) {
+          InstantiatingGrpcChannelProvider channelProvider = DatastoreSettings
+              .defaultGrpcTransportProviderBuilder()
+              .setChannelPoolSettings(ChannelPoolSettings.builder()
+                  .setInitialChannelCount(10)
+                  .setMaxChannelCount(20)
+                  .build()).build();
+        }
+        datastoreOptionsBuilder.setTransportOptions(GrpcTransportOptions.newBuilder().build());
+      }
+
+      DatastoreOptions datastoreOptions = datastoreOptionsBuilder.build();
       datastore = datastoreOptions.getService();
 
     } catch (GeneralSecurityException exception) {
